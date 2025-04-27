@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Clasificador de Dibujos</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin: 20px; }
+        canvas { border: 2px solid #000; margin: 20px auto; background: white; }
+        button { padding: 10px 20px; margin: 10px; font-size: 16px; }
+        #result { font-size: 24px; font-weight: bold; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Clasificador de Dibujos</h1>
+    <canvas id="canvas" width="280" height="280"></canvas>
+    <div>
+        <button id="clear">Limpiar</button>
+        <button id="predict">Predecir</button>
+    </div>
+    <div id="result"></div>
+    <div id="status">Cargando modelo...</div>
+
+    <script>
+        // 1. Configuración del canvas
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let isDrawing = false;
+        
+        canvas.addEventListener('mousedown', (e) => {
+            isDrawing = true;
+            ctx.beginPath();
+            ctx.moveTo(e.offsetX, e.offsetY);
+            ctx.lineWidth = 15;
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = '#000000';
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isDrawing) return;
+            ctx.lineTo(e.offsetX, e.offsetY);
+            ctx.stroke();
+        });
+
+        canvas.addEventListener('mouseup', () => isDrawing = false);
+        canvas.addEventListener('mouseout', () => isDrawing = false);
+
+        document.getElementById('clear').addEventListener('click', () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            document.getElementById('result').textContent = '';
+        });
+
+        // 2. Carga del modelo CORREGIDA
+        let model;
+        (async() => {
+            try {
+                // SOLUCIÓN CLAVE: Cargar topología y pesos por separado
+                const modelTopology = await fetch('model.json').then(r => r.json());
+                const weights = await fetch('group1-shard1of1.bin');
+                const weightData = await weights.arrayBuffer();
+                
+                model = await tf.loadLayersModel(tf.io.fromMemory({
+                    modelTopology: modelTopology,
+                    weightSpecs: modelTopology.weightsManifest[0].weights,
+                    weightData: weightData
+                }));
+                
+                console.log("✅ Modelo cargado CORRECTAMENTE");
+                console.log("Input shape:", model.layers[0].batchInputShape);
+                model.summary();
+                
+                document.getElementById('status').textContent = "Modelo listo!";
+                
+            } catch (error) {
+                console.error("❌ Error:", error);
+                document.getElementById('status').textContent = "Error: " + error.message;
+            }
+        })();
+
+        // 3. Predicción
+        document.getElementById('predict').addEventListener('click', async () => {
+            if (!model) {
+                alert("Modelo aún no cargado");
+                return;
+            }
+
+            try {
+                // Preprocesamiento EXACTO como en el entrenamiento
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = 28;
+                tempCanvas.height = 28;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.drawImage(canvas, 0, 0, 28, 28);
+                
+                const tensor = tf.browser.fromPixels(tempCanvas)
+                    .mean(2)                    // Escala de grises
+                    .expandDims(0)              // Batch [1,28,28]
+                    .expandDims(-1)             // Canal [1,28,28,1]
+                    .toFloat()
+                    .div(255.0);                // Normalización
+
+                const preds = await model.predict(tensor).data();
+                const classId = tf.argMax(preds).dataSync()[0];
+                const confidence = (preds[classId] * 100).toFixed(1);
+                
+                const classes = ["Camiseta", "Pantalón", "Suéter", "Vestido", "Abrigo", 
+                                "Sandalia", "Camisa", "Zapatilla", "Bolso", "Botín"];
+                
+                document.getElementById('result').innerHTML = `
+                    Predicción: <strong>${classes[classId]}</strong><br>
+                    Confianza: ${confidence}%
+                `;
+                
+                tensor.dispose();
+            } catch (error) {
+                console.error("Error prediciendo:", error);
+                document.getElementById('result').textContent = "Error al predecir";
+            }
+        });
+    </script>
+</body>
+</html>
